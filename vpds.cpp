@@ -3,8 +3,9 @@
  *
  */
 #include "vpds.h"
-
 #include <cstdio>
+#include <unordered_map>
+#include <string>
 
 #ifdef VPDS_PRINT_ERROR
 #define VPDS_ERROR(ERROR) fprintf(stderr,"%s\n",ERROR)
@@ -12,14 +13,24 @@
 #define VPDS_ERROR(ERROR)
 #endif
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#define PLATFORM_POPCNT(X) __popcnt(X)
+#define PLATFORM_LZCNT(X) _lzcnt_u32(X)
+#elif defined __GNUC__
+#define PLATFORM_POPCNT(X) __builtin_popcount(X)
+#define PLATFORM_LZCNT(X) __builtin_lzcnt(X)
+#else
+#error "Unknown compiler!"
+#endif
+
 typedef struct VpdsScoreStructure_T {
-
-
+    VpdsLookupCategoryBit   categories;
+    uint32_t                scores[VPDS_LOOKUP_CATEGORY_LAST];
 } * VpdsScoreStructure;
 
-typedef struct VpdsScoreBoard {
-
-
+typedef struct VpdsScoreBoard_T {
+    std::unordered_map<std::string,VpdsScoreStructure_T> deviceNameMap;
 } * VpdsScoreBoard;
 
 typedef struct VpdsScoreBoardInitializeInfo {
@@ -27,32 +38,82 @@ typedef struct VpdsScoreBoardInitializeInfo {
     uint64_t    extendSize;
 } VpdsScoreBoardInitializeInfo;
 
+void vpdsScoreBoradInsertInfo (VpdsScoreBoard board) {
+
+    VpdsScoreBoard_T* const scoreBoard = (VpdsScoreBoard_T*)board;
+    scoreBoard->deviceNameMap.reserve(200);
+
+}
+
+uint32_t vpdsCategoryToIndex (const VpdsLookupCategoryBit category) {
+    return PLATFORM_LZCNT(category) + 1;
+}
+
 bool vpdsInitializeScoreBorad(const VpdsScoreBoard board, const VpdsScoreBoardInitializeInfo initializeInfo) {
 
+    #ifndef NDEBUG
+
+        if(board == nullptr) {
+            VPDS_ERROR("vpdsInitializeScoreBorad() failed: board == nullptr");
+            return false;
+        }
+
+    #endif
+
+    vpdsScoreBoradInsertInfo(board);
     return true;
 }
 
-VpdsScoreStructure vpdsGetDeviceScoreStrucutre(const VpdsScoreBoard board, const char* deviceName) {
+VpdsScoreStructure vpdsGetDeviceScoreStrucutre(VpdsScoreBoard board, const char* deviceName) {
 
+    #ifndef NDEBUG
 
+        if(board == nullptr) {
+            VPDS_ERROR("vpdsGetDeviceScoreStrucutre() failed: board == nullptr");
+            return false;
+        }
+
+        if(deviceName == nullptr) {
+            VPDS_ERROR("vpdsGetDeviceScoreStrucutre() failed: deviceName == nullptr");
+            return false;
+        }
+
+    #endif
+
+    VpdsScoreBoard_T* const scoreBoard = (VpdsScoreBoard_T*)board;
+    std::unordered_map<std::string,VpdsScoreStructure_T>::iterator iterator = scoreBoard->deviceNameMap.find(deviceName);
+    if(iterator == scoreBoard->deviceNameMap.end()) {
+        return nullptr;
+    }
+
+    return &iterator->second;
 }
 
-void vpdsReadScore(const VpdsScoreStructure structure, const VpdsLookupCategory category) {
+uint32_t vpdsReadScore(const VpdsScoreStructure structure, const uint32_t categoryIndex) {
 
+    #ifndef NDEBUG
+
+        if(structure == nullptr) {
+            VPDS_ERROR("vpdsReadScore() failed: structure == nullptr");
+            return 0;
+        }
+
+        if(categoryIndex > VPDS_LOOKUP_CATEGORY_LAST) {
+            VPDS_ERROR("vpdsReadScore() failed: categoryIndex > VPDS_LOOKUP_CATEGORY_LAST");
+            return 0;
+        }
+
+    #endif
+
+    return structure->scores[categoryIndex];
 }
 
-/*  */
 VKAPI_ATTR VkResult VKAPI_CALL vpdsCreateScoreBoard(const VpdsScoreBoardCreateInfo* pCreateInfo, const VkAllocationCallbacks* pAllocator, VpdsScoreBoard* pBoard) {
 
     #ifndef NDEBUG
 
         if(pCreateInfo == nullptr) {
             VPDS_ERROR("vpdsCreateScoreBoard() failed: pCreateInfo == nullptr");
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        if(pCreateInfo->sType != VPDS_STRUCTURE_TYPE_SCORE_BOARD_CREATE_INFO) {
-            VPDS_ERROR("vpdsCreateScoreBoard() failed: pCreateInfo->sType != VPDS_STRUCTURE_TYPE_SCORE_BOARD_CREATE_INFO");
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
@@ -89,17 +150,16 @@ VKAPI_ATTR VkResult VKAPI_CALL vpdsCreateScoreBoard(const VpdsScoreBoardCreateIn
         }
     }
     else {
-        scoreBorad = pAllocator->pfnAllocation(nullptr,sizeof(VpdsScoreBoard_T),alignof(VpdsScoreBoard_T),VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+        scoreBorad = (VpdsScoreBoard)pAllocator->pfnAllocation(nullptr,sizeof(VpdsScoreBoard_T),alignof(VpdsScoreBoard_T),VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
         if(scoreBorad == nullptr) {
             VPDS_ERROR("vpdsCreateScoreBoard() failed: pAllocator->pfnAllocation(nullptr,sizeof(VpdsScoreBoard_T),alignof(VpdsScoreBoard_T),VK_SYSTEM_ALLOCATION_SCOPE_OBJECT) == nullptr");
             return VK_ERROR_OUT_OF_HOST_MEMORY;
         }
     }
 
-    VpdsScoreBoardInitializeInfo initializeInfo {
-        .pExtend = pCreateInfo->pExtend,
-        .extendSize = pCreateInfo->extendSize,
-    };
+    VpdsScoreBoardInitializeInfo initializeInfo;
+    initializeInfo.pExtend = pCreateInfo->pExtend;
+    initializeInfo.extendSize = pCreateInfo->extendSize;
 
     if(!vpdsInitializeScoreBorad(scoreBorad,initializeInfo)) {
         VPDS_ERROR("vpdsInitializeScoreBorad() failed: scoreBorad->initialize() == false");
@@ -117,28 +177,17 @@ VKAPI_ATTR VkResult VKAPI_CALL vpdsCreateScoreBoard(const VpdsScoreBoardCreateIn
     return VK_SUCCESS;
 }
 
-/*  */
-VKAPI_ATTR VkResult VKAPI_CALL vpdsGetPhysicalDeviceScore(const VpFunctions functions, const VkPhysicalDevice device, const VpdsScoreBoard board, const VpdsLookupInfo* pLookup, const uint32_t* pScore) {
+VKAPI_ATTR VkResult VKAPI_CALL vpdsGetPhysicalDeviceScore(const VpdsScoreBoard board, const VkPhysicalDevice device, const VpdsLookupInfo* pLookup, uint32_t* pScore) {
 
     #ifndef NDEBUG
 
-        if(functions == nullptr) {
-            VPDS_ERROR("vpdsGetPhysicalDeviceScore() failed: functions == nullptr");
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        if(functions->GetPhysicalDeviceProperties2 == nullptr) {
-            VPDS_ERROR("vpdsGetPhysicalDeviceScore() failed: functions->GetPhysicalDeviceProperties2 == nullptr");
+        if(board == nullptr) {
+            VPDS_ERROR("vpdsGetPhysicalDeviceScore() failed: board == nullptr");
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
         if(device == nullptr) {
             VPDS_ERROR("vpdsGetPhysicalDeviceScore() failed: device == nullptr");
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        if(board == nullptr) {
-            VPDS_ERROR("vpdsGetPhysicalDeviceScore() failed: board == nullptr");
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
@@ -164,23 +213,20 @@ VKAPI_ATTR VkResult VKAPI_CALL vpdsGetPhysicalDeviceScore(const VpFunctions func
 
     #endif
 
-    VkPhysicalDeviceProperties2 deviceProperties {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2
-    };
+    VkPhysicalDeviceProperties2 deviceProperties;
+    deviceProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
 
-    functions->GetPhysicalDeviceProperties2(device,&device_properties);
-    const VpdsScoreBoard_T* scoreBoard = (VpdsScoreBoard_T*)board;
-
-    auto scoreStructure = vpdsGetDeviceScoreStrucutre(scoreBoard,deviceProperties.properties.deviceName);
+    vkGetPhysicalDeviceProperties2(device,&deviceProperties);
+    auto scoreStructure = vpdsGetDeviceScoreStrucutre(board,deviceProperties.properties.deviceName);
     if(scoreStructure == nullptr) {
         return VK_ERROR_UNKNOWN;
     }
     else {
-        uint32_t writeOffset = 0;
-        for(uint32_t readOffset = 0; readOffset < popcnt(VPDS_LOOKUP_CATEGORY_MAX); readOffset++) {
-            if(pLookup->lookupCategory & (0x01f << readOffset)) {
-                pScore[writeOffset] = vpdsReadScore(scoreStructure,readOffset);
-                writeOffset = writeOffset + 1;
+        uint32_t writeIndex = 0;
+        for(uint32_t readIndex = 0; readIndex < PLATFORM_POPCNT(VPDS_LOOKUP_CATEGORY_MAX); readIndex++) {
+            if(pLookup->lookupCategory & (0x01f << readIndex)) {
+                pScore[writeIndex] = vpdsReadScore(scoreStructure,readIndex);
+                writeIndex = writeIndex + 1;
             }
         }
     }
@@ -188,7 +234,6 @@ VKAPI_ATTR VkResult VKAPI_CALL vpdsGetPhysicalDeviceScore(const VpFunctions func
     return VK_SUCCESS;
 }
 
-/*  */
 VKAPI_ATTR void VKAPI_CALL vpdsDestroyScoreBoard(const VpdsScoreBoard board, const VkAllocationCallbacks* pAllocator) {
 
     #ifndef NDEBUG

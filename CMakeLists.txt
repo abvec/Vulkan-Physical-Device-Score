@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 4.3.1)
+set(PROJECT_NAME vpds)
+project(${PROJECT_NAME} LANGUAGES C CXX)
+add_library(${PROJECT_NAME})
+find_package(Vulkan REQUIRED)
+target_sources(${PROJECT_NAME} PUBLIC "vpds.cpp")
+set(PROJECT_LIBRARIES Vulkan::Vulkan)
+target_link_libraries(${PROJECT_NAME} ${PROJECT_LIBRARIES})
